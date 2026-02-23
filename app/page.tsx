@@ -324,6 +324,10 @@ function UploadPage({
     success: boolean;
     xml?: string;
     errors?: Array<{ code: string; message: string }>;
+    guestErrors?: Array<{ code: string; message: string }>;
+    acceptedCount?: number;
+    rejectedCount?: number;
+    guestCount?: number;
   } | null>(null);
   const [communicationType, setCommunicationType] =
     useState<CommunicationType>("parte_viajeros");
@@ -369,6 +373,22 @@ function UploadPage({
         const data = await response.json();
 
         if (data.success) {
+          // FIX #4: Warn about duplicate document numbers before adding to activeJobs
+          const existingDocs = new Set(
+            activeJobs.flatMap(j => (j.guests || []).map((g: any) => g.numeroDocumento))
+          );
+          const newGuests: any[] = data.job?.guests || [];
+          const duplicates = newGuests.filter(g => g.numeroDocumento && existingDocs.has(g.numeroDocumento));
+          if (duplicates.length > 0) {
+            const names = duplicates.map((g: any) => `${g.nombre} ${g.primerApellido} (${g.numeroDocumento})`).join(', ');
+            const proceed = confirm(
+              `⚠️ Atención: Los siguientes documentos ya están en la lista y podrían causar un RECHAZO del Ministerio por duplicado:\n\n${names}\n\n¿Deseas añadirlos de todas formas?`
+            );
+            if (!proceed) {
+              setIsUploading(false);
+              return;
+            }
+          }
           setActiveJobs(prev => [...prev, data.job]);
           onJobCreated();
         } else {
@@ -398,7 +418,15 @@ function UploadPage({
       });
 
       const data = await response.json();
-      setSendResult(data);
+      setSendResult({
+        success: data.success,
+        xml: data.xml,
+        errors: data.errors,
+        guestErrors: data.guestErrors,
+        acceptedCount: data.acceptedCount,
+        rejectedCount: data.rejectedCount,
+        guestCount: data.guestCount,
+      });
       if (data.success) {
         setActiveJobs([]);
       }
@@ -897,6 +925,47 @@ function UploadPage({
                     <span className="text-red-300">{err.message}</span>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* FIX #5: Per-guest accepted/rejected counters */}
+            {sendResult.success && (sendResult.acceptedCount !== undefined || sendResult.rejectedCount !== undefined) && (
+              <div className="mt-4 flex gap-3">
+                {sendResult.acceptedCount !== undefined && (
+                  <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                    <CheckCircle2 size={16} className="text-emerald-400" />
+                    <span className="text-sm text-emerald-300 font-medium">{sendResult.acceptedCount} aceptado(s)</span>
+                  </div>
+                )}
+                {sendResult.rejectedCount !== undefined && sendResult.rejectedCount > 0 && (
+                  <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-500/10 border border-red-500/20">
+                    <XCircle size={16} className="text-red-400" />
+                    <span className="text-sm text-red-300 font-medium">{sendResult.rejectedCount} rechazado(s)</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* FIX #5: Per-guest errors returned by the Ministry */}
+            {sendResult.guestErrors && sendResult.guestErrors.length > 0 && (
+              <div className="mt-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <AlertTriangle size={16} className="text-amber-400" />
+                  <p className="text-sm font-semibold text-amber-300">
+                    El Ministerio rechazó {sendResult.guestErrors.length} viajero(s) individualmente:
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  {sendResult.guestErrors.map((err, i) => (
+                    <div
+                      key={i}
+                      className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-sm"
+                    >
+                      <span className="font-medium text-amber-400">[{err.code}]</span>{" "}
+                      <span className="text-amber-300">{err.message}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 

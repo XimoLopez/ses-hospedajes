@@ -260,8 +260,10 @@ export async function checkBatchStatus(batchId: string): Promise<SESResponse> {
         const statusMatch = responseText.match(/<estado>(.*?)<\/estado>/);
         const status = statusMatch ? statusMatch[1].toLowerCase() : "unknown";
 
-        // Parse individual errors
+        // Parse errors at the global response level
         const parsedErrors: Array<{ code: string; message: string }> = [];
+
+        // <error> blocks (individual viajero rejections)
         const errorBlocks = responseText.split("<error>");
         for (let i = 1; i < errorBlocks.length; i++) {
             const block = errorBlocks[i];
@@ -270,6 +272,29 @@ export async function checkBatchStatus(batchId: string): Promise<SESResponse> {
             if (codeMatch && descMatch) {
                 parsedErrors.push({ code: codeMatch[1], message: descMatch[1] });
             }
+        }
+
+        // Also check for <errores> wrapper (some SES endpoints use this)
+        if (parsedErrors.length === 0 && responseText.includes("<errores>")) {
+            const erroresMatch = responseText.match(/<errores>([\s\S]*?)<\/errores>/);
+            if (erroresMatch) {
+                const innerBlocks = erroresMatch[1].split("<error>");
+                for (let i = 1; i < innerBlocks.length; i++) {
+                    const block = innerBlocks[i];
+                    const codeMatch = block.match(/<codigo>(.*?)<\/codigo>/);
+                    const descMatch = block.match(/<descripcion>(.*?)<\/descripcion>/);
+                    if (codeMatch && descMatch) {
+                        parsedErrors.push({ code: codeMatch[1], message: descMatch[1] });
+                    }
+                }
+            }
+        }
+
+        // Log for debugging
+        if (parsedErrors.length > 0) {
+            console.warn(`⚠️ Lote ${batchId}: ${parsedErrors.length} error(es) individuales detectados:`, parsedErrors);
+        } else {
+            console.log(`✅ Lote ${batchId}: sin errores individuales detectados (estado: ${status})`);
         }
 
         return {
